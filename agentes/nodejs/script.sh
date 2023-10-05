@@ -2,7 +2,7 @@
 set -o nounset
 
 # Carrega as variaveis de ambiente do arquivo .env localizado na raiz do projeto
-source /.env
+source ../../.env
 JENKINS_CONTAINER_NAME=$JENKINS_CONTAINER_NAME
 JENKINS_AGENT_SSH_PUBKEY=$JENKINS_AGENT_SSH_PUBKEY
 

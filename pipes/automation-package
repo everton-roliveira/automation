@@ -1,0 +1,176 @@
+#!groovy
+
+/* groovylint-disable-next-line CompileStatic */
+pipeline {
+    agent { label 'master' }
+    environment {
+        BRANCH = 'feat/automation'
+        GITHUB_TOKEN = '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'
+        TYPE = 'core'
+        PACKAGE = 'ui-bs-cashout'
+        TYPE_VERSION = 'PATCH'
+        UPDATE_VERSION = '0.0.0'
+    }
+
+    tools {
+        nodejs 'nodejs-16.20.2'
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                dir('app-lib-base') {
+                    retry(2) {
+                        git branch: BRANCH,
+                            credentialsId: 'devops-github-psx',
+                            url: 'git@github.com:payshopx-team/ui-c-base.git'
+                    }
+
+                    sh "git config user.name  'Devops PSX - Jenkins'"
+                    sh "git config user.email 'devops@payshopx.com.br'"
+                }
+            }
+        }
+
+        stage('Build Dependecy') {
+            steps {
+                script {
+                    sh 'rm -rf packages'
+                    sh "echo '@payshopx-team:registry=https://npm.pkg.github.com \n registry=https://npm.pkg.github.com/everton-urbanobank \n //npm.pkg.github.com/:_authToken=$GITHUB_TOKEN' > ~/.npmrc"
+                    sh 'npm install -g @angular/cli@8.3.23'
+                    sh 'npm install -g @ionic/cli@6.11.9'
+                    sh 'npm install -g cordova@11.0.0'
+                    sh 'npm install -g cordova-res@0.15.4'
+                    sh 'npm install -g native-run@1.7.0'
+                    sh 'npm install -g nativescript@8.4.0'
+                    sh 'npm install -g tslib@1.13.0'
+                    sh 'npm install -g typescript@3.5.1'
+                    dir('package') {
+                        retry(2) {
+                            script {
+                                sh 'cp ../app-lib-base/package.json ./'
+                                sh 'rm -rf node_modules  2>/dev/null'
+                                sh 'rm -rf package-lock.json  2>/dev/null'
+                                sh 'npm cache clean --force'
+                                sh 'npm install --legacy-peer-deps'
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Change version') {
+            steps {
+                script {
+                    dir("app-lib-base/components/${TYPE}/${PACKAGE}") {
+                        script {
+                            def packageJsonPath = './package.json'
+                            def packageJsonContent = readFile(packageJsonPath)
+                            def json = readJSON text: packageJsonContent
+                            def currentVersion = json.version
+
+                            // Calcula a nova versão
+                            UPDATE_VERSION = calculateVersion(currentVersion, TYPE_VERSION)
+
+                            // Atualiza a versão no package.json
+                            json.version = UPDATE_VERSION
+
+                            // Salva as alterações de volta no package.json
+                            def updatedPackageJsonContent = new groovy.json.JsonBuilder(json).toPrettyString()
+                            writeFile file: packageJsonPath, text: updatedPackageJsonContent
+
+                            echo "A versão no package.json foi atualizada para: ${UPDATE_VERSION}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Copy Package') {
+            steps {
+                script {
+                    dir('packages') {
+                        script {
+                            sh "cp -r ../app-lib-base/components/${TYPE}/${PACKAGE} ./"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Build Package') {
+            steps {
+                dir("packages/${PACKAGE}") {
+                    script {
+                        sh 'npm i --legacy-peer-deps'
+                        sh 'npm run build'
+                    }
+                }
+            }
+        }
+
+        stage('Publish') {
+            parallel {
+                stage('Publish Package') {
+                    steps {
+                        dir("packages/${PACKAGE}/dist") {
+                            script {
+                                sh 'npm publish --registry=https://npm.pkg.github.com/everton-urbanobank --access private'
+                            }
+                        }
+                    }
+                }
+
+                stage('Commit and Push') {
+                    steps {
+                        dir('app-lib-base') {
+                            retry(2) {
+                                script {
+                                    def pathPackageJsonFile = "./components/${TYPE}/${PACKAGE}/package.json"
+                                    def commitMessage = "chore: change version ${UPDATE_VERSION} in ${TYPE}/${PACKAGE}"
+
+                                    // Use o bloco sshagent para autenticar a conexão SSH
+                                    sshagent(['devops-github-psx']) {
+                                        sh "git add ${pathPackageJsonFile}"
+                                        sh "git commit -m '${commitMessage}'"
+                                        sh "git push origin ${BRANCH}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+def calculateVersion(String version, String typeVersion) {
+    // Divide a versão em partes (major, minor, patch)
+    def versionParts = version.split(/\./)
+    def major = versionParts[0] as Integer
+    def minor = versionParts[1] as Integer
+    def patch = versionParts[2] as Integer
+
+    // Incrementa a versão com base em typeVersion
+    switch (typeVersion) {
+        case 'PATCH':
+            patch += 1
+            break
+        case 'MINOR':
+            minor += 1
+            patch = 0
+            break
+        case 'MAJOR':
+            major += 1
+            minor = 0
+            patch = 0
+            break
+        default:
+            echo "TYPE_VERSION não reconhecido: ${typeVersion}"
+            currentBuild.result = 'FAILURE'
+            return
+    }
+
+    return "${major}.${minor}.${patch}"
+}

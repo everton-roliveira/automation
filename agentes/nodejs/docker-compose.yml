@@ -11,14 +11,13 @@ services:
     environment:
       - JENKINS_AGENT_SSH_PUBKEY=$JENKINS_AGENT_SSH_PUBKEY
     networks:
-      jenkinsnet:
-        ipv4_address: 192.168.0.100
+      - jenkinsnet
 
 networks:
   jenkinsnet:
-    driver: bridge
-    ipam:
-      driver: default
-      config:
-        - subnet: 192.168.0.0/24
-          gateway: 192.168.0.1
+    # driver: bridge
+    # ipam:
+    #   driver: default
+    #   config:
+    #     - subnet: 192.168.0.0/24
+    #       gateway: 192.168.0.1
